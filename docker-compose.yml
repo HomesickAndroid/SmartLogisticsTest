@@ -1,0 +1,148 @@
+name: smart-logistics
+
+# Обработка данных и Airflow используют один образ и общие подключения.
+x-runtime: &runtime
+  image: smart-logistics-runtime:local
+  build:
+    context: .
+    dockerfile: docker/airflow/Dockerfile
+  env_file: &env-files
+    - .env.example
+    - path: .env
+      required: false
+  environment: &env
+    PGHOST: postgres
+    PGPORT: 5432
+    PGDATABASE: ${POSTGRES_DB:-deals_bigdata}
+    PGUSER: ${POSTGRES_USER:-logistics}
+    CLICKHOUSE_HOST: clickhouse
+    CLICKHOUSE_USER: logistics
+    AS_OF: ${AS_OF:-2026-10-26}
+    N_PRICES: ${N_PRICES:-300000}
+    SEED: ${SEED:-20261026}
+    ML_ITERATIONS: ${ML_ITERATIONS:-450}
+    ML_THREADS: ${ML_THREADS:-4}
+    START_DATE: ${START_DATE:-}
+    END_DATE: ${END_DATE:-}
+    ARTIFACT_DIR: /artifacts
+  volumes:
+    - artifacts:/artifacts
+    - airflow-logs:/opt/airflow/logs
+
+x-airflow: &airflow
+  <<: *runtime
+  environment:
+    <<: *env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'false'
+    AIRFLOW__CORE__PARALLELISM: 2
+    AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: 1
+    AIRFLOW__CORE__DAGS_FOLDER: /opt/project/dags
+    AIRFLOW__WEBSERVER__WORKERS: 2
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
+    AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: 60
+    AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session
+
+services:
+  postgres:
+    image: postgres:17@sha256:e38411452a464af89e5adadb8d223bf53b898d47d6ef918b2d58c08707350449
+    env_file: *env-files
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-deals_bigdata}
+      POSTGRES_USER: ${POSTGRES_USER:-logistics}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports: ['127.0.0.1:${POSTGRES_PORT:-5432}:5432']
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.3.6.56@sha256:c93927bb54cda3e5de39390d6465ddbe17adb8a45c2a18aaf38f5840779130bb
+    env_file: *env-files
+    environment:
+      CLICKHOUSE_USER: logistics
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: '1'
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./docker/clickhouse/config.xml:/etc/clickhouse-server/config.d/local.xml:ro
+    ports: ['127.0.0.1:${CLICKHOUSE_PORT:-8123}:8123']
+    healthcheck:
+      test: [CMD-SHELL, 'wget -q -O - http://localhost:8123/ping | grep -q Ok']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # Единственная одноразовая задача: готовит источник и все результаты перед запуском интерфейсов.
+  pipeline:
+    <<: *runtime
+    entrypoint: [/opt/pipeline-venv/bin/python, -m, etl.cli]
+    command: [bootstrap]
+    depends_on:
+      postgres: {condition: service_healthy}
+      clickhouse: {condition: service_healthy}
+
+  airflow-webserver:
+    <<: *airflow
+    entrypoint: [bash, /opt/project/docker/airflow/start.sh, webserver]
+    depends_on:
+      pipeline: {condition: service_completed_successfully}
+    ports: ['127.0.0.1:${AIRFLOW_PORT:-8080}:8080']
+    healthcheck:
+      test: [CMD, curl, --fail, http://localhost:8080/health]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  airflow-scheduler:
+    <<: *airflow
+    entrypoint: [bash, /opt/project/docker/airflow/start.sh, scheduler]
+    depends_on:
+      airflow-webserver: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, curl, --fail, http://localhost:8974/health]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  superset:
+    build:
+      context: .
+      dockerfile: docker/superset/Dockerfile
+    env_file: *env-files
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGUSER: ${POSTGRES_USER:-logistics}
+      PGDATABASE: ${POSTGRES_DB:-deals_bigdata}
+      SUPERSET_CONFIG_PATH: /app/pythonpath/superset_config.py
+      CLICKHOUSE_HOST: clickhouse
+    entrypoint: [bash, /app/start.sh]
+    depends_on:
+      pipeline: {condition: service_completed_successfully}
+    ports: ['127.0.0.1:${SUPERSET_PORT:-8088}:8088']
+    healthcheck:
+      test: [CMD, curl, --fail, http://localhost:8088/health]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  tests:
+    <<: *runtime
+    profiles: [test]
+    entrypoint: [/opt/pipeline-venv/bin/python, -m, pytest]
+    command: [-q]
+    depends_on:
+      pipeline: {condition: service_completed_successfully}
+
+volumes:
+  postgres-data:
+  clickhouse-data:
+  artifacts:
+  airflow-logs:
