@@ -1,0 +1,70 @@
+{
+  "source_rows": 300000,
+  "full_replay_identical": true,
+  "fingerprints": {
+    "core.shipments": [
+      300000,
+      "c58283d2bfcc4a43bf2cabe6724a32fc"
+    ],
+    "core.prices": [
+      299797,
+      "17a033a049be69de303b19d2908a0777"
+    ],
+    "core.price_body_groups": [
+      335305,
+      "dc7652eaaa6c90e6abc3391da5e9a48a"
+    ],
+    "core.price_dates": [
+      336802,
+      "ff725fe034e2ff918f5f7c91bf5add07"
+    ],
+    "core.dq_quarantine_prices": [
+      203,
+      "0c27f1cd422103f52f1974a07969cc20"
+    ],
+    "mart.market_corridor": [
+      203644,
+      "80a2c26e21360ee8368c1071a1931c6f"
+    ],
+    "mart.ml_price_predictions": [
+      18632,
+      "da5db8bca3a5a3fd274bf6bd9e1b0ef4"
+    ]
+  },
+  "clickhouse_parity": {
+    "market_corridor": {
+      "postgres_rows": 203644,
+      "clickhouse_rows": 203644,
+      "sum": 34210409861.364693
+    },
+    "ml_price_predictions": {
+      "postgres_rows": 18632,
+      "clickhouse_rows": 18632,
+      "sum": 3633002846.2073584
+    }
+  },
+  "ml": {
+    "r2": 0.9187773244837606,
+    "as_of": "2026-10-26",
+    "mae_rub": 28471.856244276583,
+    "mape_pct": 15.939161476863264,
+    "rmse_rub": 54521.37126538739,
+    "model_name": "catboost-2026-10-26-9dd6b582ce145034",
+    "test_count": 12808,
+    "test_start": "2026-10-05",
+    "trained_at": "2026-11-06T16:42:12.592549+00:00",
+    "train_count": 24226,
+    "train_start": "2026-07-26"
+  },
+  "services": {
+    "airflow": {
+      "dag_id": "logistics_daily",
+      "active": true,
+      "successful_runs": 3
+    },
+    "superset": {
+      "dashboard": "smart-logistics",
+      "charts": 5
+    }
+  }
+}
